@@ -1,66 +1,98 @@
 import streamlit as st
-import pandas as pd
+from google import genai
+from google.genai import types
 
-st.set_page_config(page_title="개인 시간관리 앱", page_icon="⏰")
+# 페이지 설정
+st.set_page_config(
+    page_title="연애상담 챗봇",
+    page_icon="💌",
+)
 
-st.title("⏰ 개인 시간관리 웹앱")
+st.title("💌 연애상담 챗봇")
+st.caption("Gemini 2.5 Flash Lite 기반")
 
-# 세션 상태 초기화
-if "tasks" not in st.session_state:
-    st.session_state.tasks = []
+# API 키 불러오기
+try:
+    api_key = st.secrets["GEMINI_API_KEY"]
+except Exception:
+    st.error("API 키를 불러올 수 없습니다. secrets.toml 설정을 확인하세요.")
+    st.stop()
 
-# 할 일 입력
-with st.form("task_form"):
-    task = st.text_input("할 일 입력")
-    priority = st.selectbox(
-        "중요도 선택",
-        ["낮음", "보통", "높음"]
-    )
+# Gemini 클라이언트 생성
+try:
+    client = genai.Client(api_key=api_key)
+except Exception as e:
+    st.error(f"Gemini 클라이언트 생성 오류: {e}")
+    st.stop()
 
-    submitted = st.form_submit_button("추가")
+# 시스템 프롬프트
+SYSTEM_PROMPT = """
+너는 공감 능력이 뛰어난 연애상담 챗봇이다.
 
-    if submitted and task:
-        st.session_state.tasks.append({
-            "할 일": task,
-            "중요도": priority,
-            "완료": False
-        })
+규칙:
+- 친절하고 따뜻하게 답변한다.
+- 사용자의 감정을 존중한다.
+- 강압적이거나 공격적인 표현은 사용하지 않는다.
+- 현실적이고 건강한 조언을 제공한다.
+- 답변은 너무 길지 않게 자연스럽게 작성한다.
+"""
 
-# 할 일 표시
-st.subheader("📋 할 일 목록")
+# 채팅 기록 저장
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-if st.session_state.tasks:
+# 이전 채팅 출력
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-    completed_count = 0
+# 사용자 입력
+user_input = st.chat_input("연애 고민을 입력해보세요...")
 
-    for i, task in enumerate(st.session_state.tasks):
+if user_input:
+    # 사용자 메시지 저장
+    st.session_state.messages.append({
+        "role": "user",
+        "content": user_input
+    })
 
-        col1, col2, col3 = st.columns([5, 2, 1])
+    # 사용자 메시지 출력
+    with st.chat_message("user"):
+        st.markdown(user_input)
 
-        with col1:
-            done = st.checkbox(
-                task["할 일"],
-                value=task["완료"],
-                key=f"task_{i}"
-            )
-            st.session_state.tasks[i]["완료"] = done
+    # AI 응답 생성
+    with st.chat_message("assistant"):
+        with st.spinner("생각 중..."):
 
-        with col2:
-            st.write(f"⭐ {task['중요도']}")
+            try:
+                # 대화 기록 구성
+                conversation_text = SYSTEM_PROMPT + "\n\n"
 
-        with col3:
-            if st.button("삭제", key=f"delete_{i}"):
-                st.session_state.tasks.pop(i)
-                st.rerun()
+                for msg in st.session_state.messages:
+                    role = "사용자" if msg["role"] == "user" else "상담사"
+                    conversation_text += f"{role}: {msg['content']}\n"
 
-        if done:
-            completed_count += 1
+                # Gemini 호출
+                response = client.models.generate_content(
+                    model="gemini-2.5-flash-lite",
+                    contents=conversation_text,
+                    config=types.GenerateContentConfig(
+                        temperature=0.8,
+                        max_output_tokens=500,
+                    )
+                )
 
-    # 진행률 표시
-    progress = completed_count / len(st.session_state.tasks)
-    st.subheader("📈 진행률")
-    st.progress(progress)
-    st.write(f"{completed_count} / {len(st.session_state.tasks)} 완료")
+                bot_reply = response.text
 
-else:
-    st.info("할 일을 추가해보세요!")
+                # 응답 출력
+                st.markdown(bot_reply)
+
+                # 채팅 기록 저장
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": bot_reply
+                })
+
+            except Exception as e:
+                error_message = f"오류가 발생했습니다: {e}"
+                st.error(error_message)
